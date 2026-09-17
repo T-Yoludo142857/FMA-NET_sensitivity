@@ -57,7 +57,7 @@ if __name__ == '__main__':
     if args.solver:
         mm.lap.default_solver = args.solver
 
-    gtfiles = glob.glob(os.path.join('./FMANet/data/ICPR/val_data', '*/gt.txt'))
+    gtfiles = glob.glob(os.path.join('./data/ICPR/val_data', '*/gt.txt'))
     print('gt_files', gtfiles)
     tsfiles = [f for f in glob.glob(os.path.join(args.result, '*.txt'))]
 

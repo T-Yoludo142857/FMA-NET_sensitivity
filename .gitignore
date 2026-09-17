@@ -1,0 +1,23 @@
+# 数据与权重（体积过大，不入库）
+Data/
+checkpoints/
+
+# 论文与临时文件
+*.pdf
+_paper_text.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# 实验结果输出
+results/
+ICPR/
+SatMTB/
+
+# IDE / 系统
+.vscode/
+.idea/
+.DS_Store
