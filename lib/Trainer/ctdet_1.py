@@ -39,7 +39,7 @@ class CtdetLoss(torch.nn.Module):
         self.output_width = 512
 
     def forward(self, outputs, batches):
-        hm_loss, wh_loss, off_loss, track_loss, iou_loss, seq_loss = 0, 0, 0, 0, 0, 0
+        hm_loss, wh_loss, off_loss, track_loss, iou_loss, seq_loss, small_hm_loss = 0, 0, 0, 0, 0, 0, 0
 
         for ratio in self.ratios:
             output = outputs[-1][ratio]
@@ -47,6 +47,7 @@ class CtdetLoss(torch.nn.Module):
 
 
             output['hm'] = _sigmoid(output['hm'])
+            output['hm_small'] = _sigmoid(output['hm_small'])
             output['hm_seq'] = _sigmoid(output['hm_seq'])
             wh_loss += self.crit_reg(
                 output['wh'], batch['reg_mask'],
@@ -59,11 +60,13 @@ class CtdetLoss(torch.nn.Module):
                 seq_loss += self.crit(output['hm_seq'][:, i], batch['hm_seq'][:, i]) / self.opt.seqLen
 
             hm_loss += self.crit(output['hm'], batch['hm'][:, -1])  ##直接利用的是当前的帧的heatmap
+            small_hm_loss += self.crit(output['hm_small'], batch['small_hm'])
         loss = self.hm_weight * hm_loss + self.wh_weight * wh_loss + self.off_weight * off_loss + \
-               self.seq_weight * seq_loss
+               self.seq_weight * seq_loss + self.opt.small_hm_weight * small_hm_loss
 
         loss_stats = {'loss': loss, 'hm_loss': hm_loss,
-                      'wh_loss': wh_loss, 'off_loss': off_loss, 'seq_loss': seq_loss}
+                      'wh_loss': wh_loss, 'off_loss': off_loss, 'seq_loss': seq_loss,
+                      'small_hm_loss': small_hm_loss}
 
         return loss, loss_stats
 
@@ -73,7 +76,7 @@ class CtdetTrainer(BaseTrainer):
         super(CtdetTrainer, self).__init__(opt, model, optimizer=optimizer)
 
     def _get_losses(self, opt):
-        loss_states = ['loss', 'hm_loss', 'wh_loss', 'off_loss', 'seq_loss']
+        loss_states = ['loss', 'hm_loss', 'wh_loss', 'off_loss', 'seq_loss', 'small_hm_loss']
         loss = CtdetLoss(opt)
         return loss_states, loss
 

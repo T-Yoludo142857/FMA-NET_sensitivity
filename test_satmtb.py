@@ -118,7 +118,7 @@ def process(model, image, vid=None):
         output_all = model(image, vid=vid)[-1]
         # output_all = model(image, training=False, vid=vid)[-1]
         output = output_all[1]
-        hm = output['hm'].sigmoid_()
+        hm = torch.maximum(output['hm'].sigmoid_(), output['hm_small'].sigmoid_())
         wh = output['wh']
         reg = output['reg']
         torch.cuda.synchronize()

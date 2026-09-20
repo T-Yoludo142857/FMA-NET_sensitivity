@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 
 def post_process(output, meta, num_classes, scale=1):
     # decode
-    hm = output[1]['hm'].sigmoid_()
+    hm = torch.maximum(output[1]['hm'].sigmoid_(), output[1]['hm_small'].sigmoid_())
     wh = output[1]['wh']
     reg = output[1]['reg']
 

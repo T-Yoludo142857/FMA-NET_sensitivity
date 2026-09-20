@@ -28,7 +28,7 @@ def process(model, image,vid=None):
     with torch.no_grad():
         output_all = model(image, vid=vid)[-1]
         output = output_all[1]
-        hm = output['hm'].sigmoid_()
+        hm = torch.maximum(output['hm'].sigmoid_(), output['hm_small'].sigmoid_())
         wh = output['wh']
         reg = output['reg']
         dets = ctdet_decode(hm, wh, reg=reg, num_classes=opt.num_classes, K=opt.K)

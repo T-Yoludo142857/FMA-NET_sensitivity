@@ -290,6 +290,7 @@ class COCO(data.Dataset):
             trans_output = self._get_transoutput(c, s, output_h, output_w)
 
             hm = np.zeros((seq_num, self.num_classes, output_h, output_w), dtype=np.float32)
+            small_hm = np.zeros((self.num_classes, output_h, output_w), dtype=np.float32)
             hm_seq = np.zeros((seq_num, 1, output_h, output_w), dtype=np.float32)
             wh = np.zeros((self.max_objs, 2), dtype=np.float32)
             reg = np.zeros((self.max_objs, 2), dtype=np.float32)
@@ -338,13 +339,16 @@ class COCO(data.Dataset):
                     ct_int = ct.astype(np.int32)
                     draw_umich_gaussian(hm[seq_num - 1][cls_id], ct_int, radius)
                     draw_umich_gaussian(hm_seq[seq_num - 1][0], ct_int, radius)
+                    if w * h <= self.opt.small_obj_area:
+                        draw_umich_gaussian(small_hm[cls_id], ct_int, radius)
                     wh[k] = 1. * w, 1. * h
                     ind[k] = ct_int[1] * output_w + ct_int[0]
                     reg[k] = ct - ct_int
                     reg_mask[k] = 1
                     gt_det.append([ct[0] - w / 2, ct[1] - h / 2,
                                 ct[0] + w / 2, ct[1] + h / 2, 1, cls_id])
-            ret[ratio] = {'hm': hm, 'hm_seq': hm_seq, 'reg_mask': reg_mask, 'ind': ind, 'wh': wh, 'reg': reg}
+            ret[ratio] = {'hm': hm, 'small_hm': small_hm, 'hm_seq': hm_seq,
+                          'reg_mask': reg_mask, 'ind': ind, 'wh': wh, 'reg': reg}
         for kkk in range(num_objs, self.max_objs):
             bbox_tol.append([])
         ret['file_name'] = file_name

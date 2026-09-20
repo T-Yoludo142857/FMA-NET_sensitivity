@@ -126,6 +126,15 @@ class TemporalFeatureExtractor3D(nn.Module):
         # 融合层：将三个分支输出拼接（总通道数 16*3=48）后，通过1×1×1卷积压缩到16通道
         self.fuse = BasicConv3d(in_channels=48, out_channels=16,
                                 kernel_size=(1, 1, 1), stride=(1, 1, 1), padding=(0, 0, 0))
+        self.branch_gate = nn.Sequential(
+            nn.AdaptiveAvgPool3d(1), nn.Flatten(), nn.Linear(48, 16),
+            nn.ReLU(inplace=True), nn.Linear(16, 3))
+        self.diff_branch = nn.Sequential(
+            BasicConv3d(in_channels=in_channels, out_channels=16,
+                        kernel_size=(1, 3, 3), stride=(1, 1, 1), padding=(0, 1, 1)),
+            BasicConv3d(in_channels=16, out_channels=16,
+                        kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1)))
+        self.diff_gate = nn.Sequential(nn.Conv3d(32, 16, kernel_size=1), nn.Sigmoid())
 
     def forward(self, x):
         """
@@ -138,11 +147,51 @@ class TemporalFeatureExtractor3D(nn.Module):
         out2 = self.branch2(x)
         out3 = self.branch3(x)
         # 按通道维度拼接三个分支的输出
-        out = torch.cat([out1, out2, out3], dim=1)
+        branch_features = torch.cat([out1, out2, out3], dim=1)
+        branch_weights = torch.softmax(self.branch_gate(branch_features), dim=1)
+        out = torch.cat([
+            out1 * branch_weights[:, 0].view(-1, 1, 1, 1, 1),
+            out2 * branch_weights[:, 1].view(-1, 1, 1, 1, 1),
+            out3 * branch_weights[:, 2].view(-1, 1, 1, 1, 1)], dim=1)
         # 融合后调整通道数至16
         out = self.fuse(out)
+        frame_diff = torch.zeros_like(x)
+        frame_diff[:, :, 1:] = torch.abs(x[:, :, 1:] - x[:, :, :-1])
+        diff_features = self.diff_branch(frame_diff)
+        diff_weight = self.diff_gate(torch.cat([out, diff_features], dim=1))
+        out = out + diff_weight * diff_features
         return out
 
+
+
+class HighResolutionFusion(nn.Module):
+    """Refine the highest-resolution map with projected lower-scale context."""
+    def __init__(self, channels=(16, 32, 64, 128), out_channels=16):
+        super(HighResolutionFusion, self).__init__()
+        self.project = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(channel, out_channels, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True))
+            for channel in channels
+        ])
+        self.refine = nn.Sequential(
+            nn.Conv2d(out_channels * len(channels), out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels))
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, features):
+        target_size = features[0].shape[-2:]
+        projected = []
+        for feature, project in zip(features, self.project):
+            feature = project(feature)
+            if feature.shape[-2:] != target_size:
+                feature = F.interpolate(feature, size=target_size, mode='bilinear', align_corners=False)
+            projected.append(feature)
+        return self.relu(projected[0] + self.refine(torch.cat(projected, dim=1)))
 
 
 class MaskGuidedFusionModel(nn.Module):
@@ -543,6 +592,7 @@ class DLASeg(nn.Module):
         self.mask_guided_fusion = MaskGuidedFusionModel()
         self.conv_3d = TemporalFeatureExtractor3D(3)
         self.deconv_3d = Decoder3D(16, 16)
+        self.high_resolution_fusion = HighResolutionFusion()
 
         self.mask_layer = nn.Conv2d(16, 1, kernel_size=3, padding=1, bias=True)
         self.mask_layer.bias.data.fill_(-4.6)
@@ -574,6 +624,13 @@ class DLASeg(nn.Module):
                 else:
                     fill_fc_weights(fc)
             self.__setattr__(head, fc)
+
+        self.hm_small = nn.Sequential(
+            nn.Conv2d(channels[self.first_level], head_conv, kernel_size=3, padding=1, bias=True),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(head_conv, heads['hm'], kernel_size=final_kernel, stride=1,
+                      padding=final_kernel // 2, bias=True))
+        self.hm_small[-1].bias.data.fill_(-4.6)
 
     def decode_mask_to_objects(self, mask, K=450, score_threshold=0.08):
         """
@@ -622,6 +679,7 @@ class DLASeg(nn.Module):
         current_frame_features = self.backbone(x, c0[:, i])
         mask_fused_feats = self.mask_guided_fusion(displacement_map, pre_frame_features, current_frame_features)
         p0, p1, p2, p3, _ = self.dla_up(mask_fused_feats)
+        p0 = self.high_resolution_fusion([p0, p1, p2, p3])
         y = [p0, p1, p2]
         self.ida_up(y, 0, len(y))
         p0 = y[-1]
@@ -640,6 +698,7 @@ class DLASeg(nn.Module):
             current_frame_features = self.backbone(x, c0[:, i])
             mask_fused_feats = self.mask_guided_fusion(displacement_map, pre_frame_features, current_frame_features)
             p0, p1, p2, p3, _ = self.dla_up(mask_fused_feats)
+            p0 = self.high_resolution_fusion([p0, p1, p2, p3])
             y = [p0, p1, p2]
             self.ida_up(y, 0, len(y))
             p0 = y[-1]
@@ -794,6 +853,7 @@ class DLASeg(nn.Module):
         ret = {}
         for head in self.heads:
             ret_temp[head] = getattr(self, head)(final_hm)  ##其他的头reg，wh，hm，是利用reconstructed_current作为输入
+        ret_temp['hm_small'] = self.hm_small(final_hm)
         ret[1] = ret_temp
         return [temp_feat, ret]
 

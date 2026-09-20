@@ -44,6 +44,10 @@ class opts(object):
                                  help='number of images for per sample. Currently supports 5.')
         self.parser.add_argument('--radius_mapping', type=int, default=3,
                                  help='area mapping.')
+        self.parser.add_argument('--small_obj_area', type=float, default=256.0,
+                                 help='maximum output-space area for small-object supervision.')
+        self.parser.add_argument('--small_hm_weight', type=float, default=0.5,
+                                 help='loss weight for the auxiliary small-object heatmap.')
 
         # test
         self.parser.add_argument('--nms', action='store_true',
